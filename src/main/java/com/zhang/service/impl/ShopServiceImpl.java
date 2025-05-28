@@ -10,6 +10,7 @@ import com.zhang.dto.Result;
 import com.zhang.entity.Shop;
 import com.zhang.mapper.ShopMapper;
 import com.zhang.service.IShopService;
+import com.zhang.utils.CacheClient;
 import com.zhang.utils.RedisConstants;
 import com.zhang.utils.RedisData;
 import lombok.extern.slf4j.Slf4j;
@@ -28,24 +29,26 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private CacheClient cacheClient;
 
     @Override
     public Result queryById(Long id) {
         // 解决缓存穿透
-        // Shop shop = queryWithPassThrough(id);
+//        Shop shop = cacheClient.queryWithPassThrough(RedisConstants.CACHE_SHOP_KEY, id, Shop.class, this::getById,RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
 
         // 互斥锁解决缓存击穿
         // Shop shop = queryWithMutex(id);
 
-        // 逻辑过期解决缓存击穿
-        Shop shop = queryWithLogicalExpire(id);
+//         逻辑过期解决缓存击穿
+        Shop shop = cacheClient.queryWithLogicalExpire(RedisConstants.CACHE_SHOP_KEY, id, Shop.class, this::getById, RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
         if (shop == null) {
             return Result.fail("店铺不存在");
         }
         return Result.ok(shop);
     }
 
-    // 查询商铺缓存击穿方案解决
+    // 查询商铺缓存击穿方案解决 (使用互斥锁)
     public Shop queryWithMutex(Long id) {
         String key = RedisConstants.CACHE_SHOP_KEY + id;
         // 1.从redis中查询商铺缓存
@@ -107,7 +110,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
 
-    // 查询商铺缓存穿透方案解决
+    // 查询商铺缓存击穿方案解决（使用过期时间）
     public Shop queryWithLogicalExpire(Long id) {
         String key = RedisConstants.CACHE_SHOP_KEY + id;
         // 1.从redis中查询商铺缓存
@@ -131,7 +134,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         boolean isLock = tryLock(lockKey);
         // 判断是否获取锁成功
         if (isLock) {
-           // 双重检查shop数据是否被更新
+            // 双重检查shop数据是否被更新
             shopJson = stringRedisTemplate.opsForValue().get(key);
             if (StrUtil.isBlank(shopJson)) {
                 return null;
@@ -158,6 +161,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         return shop;
     }
+
 
     // 查询商铺缓存穿透方案解决
     public Shop queryWithPassThrough(Long id) {
