@@ -29,7 +29,7 @@ public class ShopController {
      */
     @GetMapping("/{id}")
     public Result queryShopById(@PathVariable("id") Long id) {
-        log.info("查询商户信息 id: {}", id);
+//        log.info("查询商户信息 id: {}", id);
         return shopService.queryById(id);
     }
 
