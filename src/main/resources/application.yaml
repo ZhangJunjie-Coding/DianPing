@@ -1,6 +1,10 @@
 server:
   port: 8081
 spring:
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
   application:
     name: dp
   datasource:
@@ -9,7 +13,7 @@ spring:
     username: root
     password: 123456
   redis:
-    host: 127.0.0.1
+    host: 10.245.247.185
     port: 6379
     lettuce:
       pool:

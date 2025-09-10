@@ -24,5 +24,6 @@ public class ShopTypeController {
         log.info("查询商户类型");
         return typeService.queryTypeList();
     }
+    
 
 }

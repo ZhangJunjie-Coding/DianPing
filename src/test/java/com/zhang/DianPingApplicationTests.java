@@ -1,23 +1,43 @@
 package com.zhang;
 
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.bean.copier.CopyOptions;
+import cn.hutool.core.lang.UUID;
+import com.zhang.dto.UserDTO;
 import com.zhang.entity.Shop;
+import com.zhang.entity.User;
 import com.zhang.service.impl.ShopServiceImpl;
+import com.zhang.service.impl.UserServiceImpl;
 import com.zhang.utils.CacheClient;
 import com.zhang.utils.RedisConstants;
 import com.zhang.utils.RedisIdWorker;
+import lombok.extern.slf4j.Slf4j;
+import org.junit.Before;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StopWatch;
 
 import javax.annotation.Resource;
+import java.io.*;
 import java.lang.reflect.Executable;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-@SpringBootTest
+import static com.zhang.utils.RedisConstants.LOGIN_USER_KEY;
+import static com.zhang.utils.RedisConstants.LOGIN_USER_TTL;
 
+@SpringBootTest
+@Slf4j
 public class DianPingApplicationTests {
     @Resource
     private CacheClient cacheClient;
@@ -28,31 +48,152 @@ public class DianPingApplicationTests {
     @Resource
     private RedisIdWorker redisIdWorker;
 
+
     private ExecutorService es = Executors.newFixedThreadPool(500);
+
+    @Resource
+    private UserServiceImpl userService;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Test
+    public void saveToken() throws IOException {
+        File file = new File("./token.txt");
+
+        if (!file.exists()) {
+            file.createNewFile();
+        }
+        FileWriter fileWriter = new FileWriter(file);
+
+        List<User> list = userService.list();
+        for (User user : list) {
+            String token = UUID.randomUUID().toString(true);
+            UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+            Map<String, Object> userMap = BeanUtil.beanToMap(userDTO, new HashMap<>(),
+                    CopyOptions
+                            .create()
+                            .setIgnoreNullValue(true)
+                            .setFieldValueEditor((filedName, filedValue) -> filedValue.toString()));
+            fileWriter.write(token + "\n");
+            // 存储
+            String tokenKey = LOGIN_USER_KEY + token;
+            stringRedisTemplate.opsForHash().putAll(tokenKey, userMap);
+            // 设置token有效期
+            stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.MINUTES);
+        }
+    }
 
     @Test
     public void testIdWorker() throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(300);
         StopWatch stopWatch = new StopWatch();
         Runnable task = () -> {
-            for(int i = 0;i<100;i++){
+            for (int i = 0; i < 100; i++) {
                 long id = redisIdWorker.nextId("order");
                 System.out.println("id = " + id);
             }
             latch.countDown();
         };
         stopWatch.start();
-        for(int i = 0;i<300;i++){
+        for (int i = 0; i < 300; i++) {
             es.submit(task);
         }
         latch.await();
         stopWatch.stop();
-        System.out.println("运行时间: "+stopWatch.getTotalTimeSeconds());
+        System.out.println("运行时间: " + stopWatch.getTotalTimeSeconds());
     }
 
     @Test
     public void testSaveSHop() throws InterruptedException {
-        Shop shop = shopService.getById(1l);
-        cacheClient.setWithLogicalExpire(RedisConstants.CACHE_SHOP_KEY + 1, shop, 10L, TimeUnit.SECONDS);
+//        Shop shop = shopService.getById(1l);
+        List<Shop> list = shopService.list();
+        for (Shop shop: list){
+
+            cacheClient.setWithLogicalExpire(RedisConstants.CACHE_SHOP_KEY + shop.getId(), shop, 10L, TimeUnit.SECONDS);
+        }
+    }
+
+    @Resource
+    private RedissonClient redissonClient;
+
+//    @Resource
+//    private RedissonClient redissonClient2;
+//
+//    @Resource
+//    private RedissonClient redissonClient3;
+
+    private RLock lock1 = null;
+    private RLock lock2 = null;
+    private RLock lock3 = null;
+    private RLock lock = null;
+
+    //    @BeforeEach
+    void setup() {
+        lock1 = redissonClient.getLock("order");
+//        lock2 = redissonClient1.getLock("order");
+//        lock3 = redissonClient2.getLock("order");
+        // 创建联锁 multiLock
+        lock = redissonClient.getMultiLock(lock1, lock2, lock3);
+    }
+
+    @Test
+    public void testRedisson() throws InterruptedException {
+        // 获取锁（可重入），指定锁的名称
+        RLock lock = redissonClient.getLock("anyLock");
+        // 尝试获取锁，参数分别是：获取所得最大等待时间（期间会重试），锁自动释放时间，事件单位
+        boolean isLock = lock.tryLock(1, 1, TimeUnit.SECONDS);
+        // 判断锁是否获取成功
+        if (isLock) {
+            try {
+                System.out.println("执行业务");
+            } finally {
+                // 释放锁
+                lock.unlock();
+            }
+        }
+    }
+
+    @Test
+    public void method1() throws InterruptedException {
+        boolean isLock = lock.tryLock(1l, TimeUnit.SECONDS);
+        if (!isLock) {
+            log.error("获取锁失败....1");
+            return;
+        }
+        try {
+            log.info("获取锁成功....1");
+            method2();
+            log.info("开始执行业务....1");
+        } finally {
+            log.warn("准备释放锁.......1");
+            lock.unlock();
+        }
+    }
+
+    void method2() throws InterruptedException {
+        boolean isLock = lock.tryLock();
+        if (!isLock) {
+            log.error("获取锁失败....2");
+            return;
+        }
+        try {
+            log.info("获取锁成功....2");
+            log.info("开始执行业务....2");
+        } finally {
+
+            log.warn("准备释放锁.......2");
+            lock.unlock();
+        }
+    }
+    @Test
+    void test03(){
+        int i =0;
+        System.out.println(i++ + ++i);
+    }
+
+    @Test
+    void loadShopData(){
+
     }
 }
