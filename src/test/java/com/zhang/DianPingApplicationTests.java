@@ -19,12 +19,15 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.geo.Point;
+import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StopWatch;
 
 import javax.annotation.Resource;
 import java.io.*;
 import java.lang.reflect.Executable;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +35,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static com.zhang.utils.RedisConstants.LOGIN_USER_KEY;
 import static com.zhang.utils.RedisConstants.LOGIN_USER_TTL;
@@ -108,7 +112,7 @@ public class DianPingApplicationTests {
     public void testSaveSHop() throws InterruptedException {
 //        Shop shop = shopService.getById(1l);
         List<Shop> list = shopService.list();
-        for (Shop shop: list){
+        for (Shop shop : list) {
 
             cacheClient.setWithLogicalExpire(RedisConstants.CACHE_SHOP_KEY + shop.getId(), shop, 10L, TimeUnit.SECONDS);
         }
@@ -186,14 +190,37 @@ public class DianPingApplicationTests {
             lock.unlock();
         }
     }
+
     @Test
-    void test03(){
-        int i =0;
+    void test03() {
+        int i = 0;
         System.out.println(i++ + ++i);
     }
 
     @Test
-    void loadShopData(){
-
+    void loadShopData() {
+        // 1.查询店铺信息
+        List<Shop> list = shopService.list();
+        // 2.将店铺分组，按照typeId分组，typeId一致的放到一个集合中
+        Map<Long, List<Shop>> map = list.stream().collect(Collectors.groupingBy(shop -> shop.getTypeId()));
+        // 3.分批写入Redis
+        for (Map.Entry<Long, List<Shop>> entry : map.entrySet()) {
+            // 获取类型id
+            Long typeId = entry.getKey();
+            String key = "shop:geo:" + typeId;
+            // 获取同类型的店铺集合
+            List<Shop> value = entry.getValue();
+            List<RedisGeoCommands.GeoLocation<String>> locations = new ArrayList<>(value.size());
+            // 写入redis GEOADD key 经度 维度 member
+            for (Shop shop : value) {
+                // 一个一个的添加
+//                stringRedisTemplate.opsForGeo().add(key, new Point(shop.getX(), shop.getY()), shop.getId().toString());
+                locations.add(new RedisGeoCommands.GeoLocation<>(
+                        shop.getId().toString(),
+                        new Point(shop.getX(),shop.getY())
+                ));
+            }
+            stringRedisTemplate.opsForGeo().add(key,locations);
+        }
     }
 }
