@@ -13,6 +13,7 @@ import com.zhang.utils.RedisConstants;
 import com.zhang.utils.RedisIdWorker;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Before;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RLock;
@@ -217,10 +218,61 @@ public class DianPingApplicationTests {
 //                stringRedisTemplate.opsForGeo().add(key, new Point(shop.getX(), shop.getY()), shop.getId().toString());
                 locations.add(new RedisGeoCommands.GeoLocation<>(
                         shop.getId().toString(),
-                        new Point(shop.getX(),shop.getY())
+                        new Point(shop.getX(), shop.getY())
                 ));
             }
-            stringRedisTemplate.opsForGeo().add(key,locations);
+            stringRedisTemplate.opsForGeo().add(key, locations);
+        }
+    }
+
+    @Test
+    public void testHyperLogLog() {
+        String[] users = new String[1000];
+        int j = 0;
+        for (int i = 0; i < 1000000; i++) {
+
+            j = i % 1000;
+            users[j] = "user_" + i;
+            if (j  == 999) {
+                stringRedisTemplate.opsForHyperLogLog().add("hl1", users);
+            }
+        }
+        Long size = stringRedisTemplate.opsForHyperLogLog().size("hl1");
+        System.out.println("size= " + size);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        es.shutdown();
+    }
+
+    @Test
+    public void testHyperLogLog02() {
+        try {
+            String key = "hl1";
+
+            // 先清除可能存在的旧数据
+            stringRedisTemplate.delete(key);
+
+            int batchSize = 1000;
+            for (int i = 0; i < 1000000; i += batchSize) {
+                String[] users = new String[batchSize];
+                for (int j = 0; j < batchSize && (i + j) < 1000000; j++) {
+                    users[j] = "user_" + (i + j);
+                }
+                stringRedisTemplate.opsForHyperLogLog().add(key, users);
+
+                // 添加短暂延迟，避免资源过度消耗
+                if (i % 10000 == 0) {
+                    Thread.sleep(10);
+                }
+            }
+
+            Long size = stringRedisTemplate.opsForHyperLogLog().size(key);
+            System.out.println("HyperLogLog estimated size: " + size);
+
+        } catch (Exception e) {
+            log.error("HyperLogLog test failed", e);
         }
     }
 }
